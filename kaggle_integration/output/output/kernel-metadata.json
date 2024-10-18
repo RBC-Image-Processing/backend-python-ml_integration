@@ -1,0 +1,15 @@
+{
+    "id": "periclesadjovi/notebook_v3_20241018_010321",
+    "title": "notebook_v3 20241018_010321",
+    "code_file": "notebook_v3.ipynb",
+    "language": "python",
+    "kernel_type": "notebook",
+    "is_private": "true",
+    "enable_gpu": true,
+    "enable_tpu": false,
+    "dataset_sources": [
+        "paultimothymooney/chest-xray-pneumonia"
+    ],
+    "kernel_sources": [],
+    "accelerator": "GPU"
+}
