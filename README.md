@@ -2,6 +2,7 @@
 
 ## Overview
 
+
 This project is designed to train machine learning models using modular components for preprocessing, model creation, training, and integration with Kaggle for remote training. Additionally, the project exposes a REST API to serve the trained model for predictions, enabling external systems to send data for inference.
 
 ## Directory Structure
