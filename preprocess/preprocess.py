@@ -1,91 +1,107 @@
 import os
-import pydicom
-import cv2
-import numpy as np
+import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
+import cv2
+import pydicom
+import numpy as np
+from torchvision import transforms
+from PIL import Image
+import logging
 
-# Dataset creation class
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 class PneumoniaDataset(Dataset):
-    def __init__(self, data_dir, labels, transform=None, img_size=128):
-        self.data_dir = data_dir
+    def __init__(self, paths, labels, transform=None, img_size=224):
+        self.paths = paths
         self.labels = labels
         self.transform = transform
         self.img_size = img_size
-        self.data = []
-
-        # Process the data image paths and add labels to them
-        for label in labels:
-            label_dir = os.path.join(data_dir, label)
-            class_idx = labels.index(label)
-            print(label_dir)
-
-            # Create image directories
-            for img_file in os.listdir(label_dir):
-                img_path = os.path.join(label_dir, img_file)
-                self.data.append((img_path, class_idx))
 
     def __len__(self):
-        return len(self.data)
+        return len(self.paths)
 
     def __getitem__(self, idx):
-        img_path, label = self.data[idx]
+        img_path = self.paths[idx]
+        label = self.labels[idx]
 
+        # Load DICOM or image file
         try:
-            # Attempt to read as a DICOM file
-            dicom = pydicom.dcmread(img_path)
-            img = dicom.pixel_array
-        except Exception as e:
-            # If DICOM read fails, fallback to standard image reading
-            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+            if img_path.endswith(".dcm"):
+                dicom = pydicom.dcmread(img_path)
+                img = dicom.pixel_array
+            else:
+                img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+            
+            # Check if image loaded correctly
             if img is None:
-                raise ValueError(f"Failed to read image file {img_path}: {e}")
+                raise ValueError(f"Failed to load image at path: {img_path}")
+                
+            # Resize and normalize
+            img_resized = cv2.resize(img, (self.img_size, self.img_size))
+            img_normalized = img_resized / 255.0
+            img_rgb = np.stack([img_normalized] * 3, axis=-1)
+            img_pil = Image.fromarray((img_rgb * 255).astype(np.uint8))
 
-        # Resize and normalize
-        resized_image = cv2.resize(img, (self.img_size, self.img_size))
-        img_normalized = resized_image / 255.0
+            if self.transform:
+                img_pil = self.transform(img_pil)
+            img_tensor = transforms.ToTensor()(img_pil)
 
-        # Convert to 3 channels by repeating the single channel for grayscale images
-        img_rgb = np.stack([img_normalized] * 3, axis=-1)  # Convert to 3-channel RGB image
+            return img_tensor, label
+        except Exception as e:
+            logger.error(f"Error processing file {img_path}: {e}")
+            return None, None  # You might want to handle these cases in your training loop
 
-        # Convert to tensor
-        img_tensor = torch.tensor(img_rgb).permute(2, 0, 1).float()
+def load_rsna_dataset(rsna_dir):
+    labels_df = pd.read_csv(os.path.join(rsna_dir, 'stage_2_train_labels.csv'))
+    labels_df['path'] = labels_df['patientId'].apply(lambda x: os.path.join(rsna_dir, 'stage_2_train_images', f"{x}.dcm"))
+    pneumonia_df = labels_df[labels_df['Target'] == 1]
+    normal_df = labels_df[labels_df['Target'] == 0]
 
-        if self.transform:
-            img_tensor = self.transform(img_tensor)
+    pneumonia_paths = pneumonia_df['path'].tolist()
+    normal_paths = normal_df['path'].tolist()
 
-        return img_tensor, label
+    logger.info(f"RSNA Dataset: {len(pneumonia_paths)} pneumonia cases, {len(normal_paths)} normal cases.")
+    return pneumonia_paths, normal_paths
 
-# Data loader initialization
-def get_dataloaders(data_dir, labels, batch_size):
-    train_dataset = PneumoniaDataset(data_dir=os.path.join(data_dir, 'train'), labels=labels)
-    test_dataset = PneumoniaDataset(data_dir=os.path.join(data_dir, 'test'), labels=labels)
-    val_dataset = PneumoniaDataset(data_dir=os.path.join(data_dir, 'val'), labels=labels)
+def load_chest_xray_dataset(chest_xray_dir):
+    pneumonia_dir = os.path.join(chest_xray_dir, 'train', 'PNEUMONIA')
+    normal_dir = os.path.join(chest_xray_dir, 'train', 'NORMAL')
 
+    pneumonia_paths = [os.path.join(pneumonia_dir, fname) for fname in os.listdir(pneumonia_dir) if fname.endswith(('.jpeg', '.jpg', '.png'))]
+    normal_paths = [os.path.join(normal_dir, fname) for fname in os.listdir(normal_dir) if fname.endswith(('.jpeg', '.jpg', '.png'))]
+
+    return pneumonia_paths, normal_paths
+
+def get_dataloaders(data_dir, batch_size, img_size=224):
+    # Paths for RSNA and Chest X-Ray datasets
+    rsna_dir = os.path.join(data_dir, 'rsna-pneumonia')
+    chest_xray_dir = os.path.join(data_dir, 'chest-xray')
+
+    # Load RSNA dataset
+    rsna_pneumonia_paths, rsna_normal_paths = load_rsna_dataset(rsna_dir)
+    rsna_dataset = PneumoniaDataset(rsna_pneumonia_paths + rsna_normal_paths, [1] * len(rsna_pneumonia_paths) + [0] * len(rsna_normal_paths), img_size=img_size)
+
+    # Load Chest X-Ray dataset
+    chest_xray_pneumonia_paths, chest_xray_normal_paths = load_chest_xray_dataset(chest_xray_dir)
+    chest_xray_dataset = PneumoniaDataset(chest_xray_pneumonia_paths + chest_xray_normal_paths, [1] * len(chest_xray_pneumonia_paths) + [0] * len(chest_xray_normal_paths), img_size=img_size)
+
+    # Combine both datasets
+    combined_dataset = ConcatDataset([rsna_dataset, chest_xray_dataset])
+
+    # Split combined dataset
+    train_size = int(0.7 * len(combined_dataset))
+    val_size = int(0.15 * len(combined_dataset))
+    test_size = len(combined_dataset) - train_size - val_size
+
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(combined_dataset, [train_size, val_size, test_size])
+
+    # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, test_loader, val_loader
-
-# Dataset insights function
-def dataset_insights(data_dir):
-    """
-    Function to print insights about the dataset like the number of images in each class (NORMAL and PNEUMONIA).
-    """
-    labels = ['NORMAL', 'PNEUMONIA']
-    
-    for label in labels:
-        label_dir = os.path.join(data_dir, 'train', label)
-        num_images = len(os.listdir(label_dir))
-        print(f"Number of {label} images in train set: {num_images}")
-    
-    for label in labels:
-        label_dir = os.path.join(data_dir, 'test', label)
-        num_images = len(os.listdir(label_dir))
-        print(f"Number of {label} images in test set: {num_images}")
-    
-    for label in labels:
-        label_dir = os.path.join(data_dir, 'val', label)
-        num_images = len(os.listdir(label_dir))
-        print(f"Number of {label} images in validation set: {num_images}")
+    logger.info(f"Data split: {len(train_dataset)} training, {len(val_dataset)} validation, {len(test_dataset)} test samples.")
+    return train_loader, val_loader, test_loader
