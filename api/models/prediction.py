@@ -1,3 +1,4 @@
+import base64
 import os
 import torch
 import torch.nn.functional as F
@@ -6,6 +7,10 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from torchvision import models
 from api.utils.image_processing import process_dicom_with_clahe
 import requests
+import google.generativeai as genai 
+
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Define model directory and logging
 MODEL_DIR = os.path.abspath("output")
@@ -73,16 +78,43 @@ def getPromptGemini(prompt: str) -> str:
         logger.error(f"Failed to get response from Gemini API: {e}")
         return "Error generating interpretation from Gemini API."
 
-def generate_interpretation_gemini(prediction: str, confidence: float) -> str:
-    """Generate a Gemini API-based interpretation based on the prediction and confidence."""
-    prompt = (
-        f"The medical image was analyzed, and the results indicate a classification of '{prediction}' with a confidence score of {confidence:.2f}. "
-        f"Please provide a detailed medical interpretation explaining what this means for the patient's health."
-    )
+# def generate_interpretation_gemini(prediction: str, confidence: float) -> str:
+#     """Generate a Gemini API-based interpretation based on the prediction and confidence."""
+#     prompt = (
+#         f"The medical image was analyzed, and the results indicate a classification of '{prediction}' with a confidence score of {confidence:.2f}. "
+#         f"Please provide a detailed medical interpretation explaining what this means for the patient's health."
+#     )
     
+#     logger.info(f"Generating interpretation with Gemini API for prediction: {prediction}, confidence: {confidence}")
+#     interpretation = getPromptGemini(prompt)
+#     logger.info(f"Generated interpretation: {interpretation}")
+
+#     return interpretation
+
+def generate_interpretation_gemini(prediction: str, confidence: float, image_data: bytes) -> str:
+    """Generate an interpretation using Gemini API based on the prediction, confidence, and image data."""
+    # Encode image data as base64
+    image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+    prompt = (
+        f"The AI model has analyzed the provided medical image and classified it as '{prediction}' with a confidence score of {confidence:.2f}. "
+        f"Please provide a thorough clinical interpretation that explains the possible implications of this finding. "
+        f"The interpretation should consider the likely clinical scenarios that align with a '{prediction}' diagnosis, along with possible symptoms, "
+        f"treatment considerations, and advice for the next steps a patient might take. Additionally, the image data is attached as encoded text "
+        f"for any relevant context: {image_base64}. "
+        f"Your interpretation should be clear, patient-centered, and should emphasize any limitations of the AI model's confidence score in this context."
+    )
+
     logger.info(f"Generating interpretation with Gemini API for prediction: {prediction}, confidence: {confidence}")
-    interpretation = getPromptGemini(prompt)
-    logger.info(f"Generated interpretation: {interpretation}")
 
-    return interpretation
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
 
+        interpretation = response.text
+        logger.info(f"Generated interpretation: {interpretation}")
+        return interpretation
+
+    except Exception as e:
+        logger.error(f"Failed to get response from Gemini API: {e}")
+        return "An error occurred while generating the interpretation. Please try again later."

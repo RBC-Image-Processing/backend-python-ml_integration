@@ -57,12 +57,17 @@ def process_dicom_with_clahe(dicom_data: bytes):
 def process_image_file(image_data: bytes):
     try:
         logger.info("Starting standard image file processing.")
-
-        # Open and convert image
-        img_pil = Image.open(BytesIO(image_data)).convert("RGB")
+        
+        # Open image and validate format
+        img_pil = Image.open(BytesIO(image_data))
+        
+        # Ensure image is in RGB mode
+        if img_pil.mode != "RGB":
+            img_pil = img_pil.convert("RGB")
+        
         logger.info("Image file loaded and converted to RGB.")
-
-        # Transform and normalize
+        
+        # Apply transformations and normalization
         processed_image = transform(img_pil).unsqueeze(0)
         logger.info("Image transformed and normalized.")
 
@@ -70,4 +75,4 @@ def process_image_file(image_data: bytes):
 
     except Exception as e:
         logger.error(f"Error processing image file: {e}")
-        raise
+        raise HTTPException(status_code=400, detail="The uploaded file is not a valid image.")
