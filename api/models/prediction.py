@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Load classes
 classes = ["NORMAL", "PNEUMONIA"]
 
-def load_model(model_name: str = "resnet50_model.pth"):
+def load_model(model_name: str = "cnn.pth"):
     model_path = os.path.join(MODEL_DIR, model_name)
     if not os.path.exists(model_path):
         logger.error(f"Model file '{model_name}' not found in {MODEL_DIR}. Ensure the correct path.")
