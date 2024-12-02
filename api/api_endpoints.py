@@ -34,7 +34,7 @@ app.add_exception_handler(422, validation_exception_handler)
 
 # Load model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = load_model("resnet50_model.pth").to(device)
+model = load_model("cnn.pth").to(device)
 
 # Set up the Gemini API client
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
