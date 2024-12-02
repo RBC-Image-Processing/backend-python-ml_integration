@@ -1,5 +1,6 @@
-import base64
+import openai
 import os
+import base64
 import torch
 import torch.nn.functional as F
 import logging
@@ -7,10 +8,25 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from torchvision import models
 from api.utils.image_processing import process_dicom_with_clahe
 import requests
-import google.generativeai as genai 
+import google.generativeai as genai
+from openai import OpenAI
+from groq import Groq
+from dotenv import load_dotenv
+from typing import Optional
 
+# Load environment variables
+load_dotenv()
 
+# Verify the API keys
+print("GROQ_API_KEY:", os.getenv("GROQ_API_KEY"))
+print("GEMINI_API_KEY:", os.getenv("GEMINI_API_KEY"))
+
+# Initialize Groq client with API key
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# Configure Gemini API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+openai_client = OpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
 
 # Define model directory and logging
 MODEL_DIR = os.path.abspath("output")
@@ -53,9 +69,9 @@ def predict(model, dicom_data: bytes):
     with torch.no_grad():
         output = model(image_tensor)
         probabilities = F.softmax(output, dim=1)
-        predicted = torch.max(probabilities, 1)[1]
+        predicted = torch.argmax(probabilities, dim=1)
         prediction = classes[predicted.item()]
-        confidence = probabilities[0][predicted].item()
+        confidence = probabilities[0][predicted.item()].item()
 
     return {"prediction": prediction, "confidence": confidence}
 
@@ -77,19 +93,6 @@ def getPromptGemini(prompt: str) -> str:
     except Exception as e:
         logger.error(f"Failed to get response from Gemini API: {e}")
         return "Error generating interpretation from Gemini API."
-
-# def generate_interpretation_gemini(prediction: str, confidence: float) -> str:
-#     """Generate a Gemini API-based interpretation based on the prediction and confidence."""
-#     prompt = (
-#         f"The medical image was analyzed, and the results indicate a classification of '{prediction}' with a confidence score of {confidence:.2f}. "
-#         f"Please provide a detailed medical interpretation explaining what this means for the patient's health."
-#     )
-    
-#     logger.info(f"Generating interpretation with Gemini API for prediction: {prediction}, confidence: {confidence}")
-#     interpretation = getPromptGemini(prompt)
-#     logger.info(f"Generated interpretation: {interpretation}")
-
-#     return interpretation
 
 def generate_interpretation_gemini(prediction: str, confidence: float, image_data: bytes) -> str:
     """Generate an interpretation using Gemini API based on the prediction, confidence, and image data."""
@@ -118,3 +121,110 @@ def generate_interpretation_gemini(prediction: str, confidence: float, image_dat
     except Exception as e:
         logger.error(f"Failed to get response from Gemini API: {e}")
         return "An error occurred while generating the interpretation. Please try again later."
+
+def generate_interpretation_groq(prediction: str, confidence: float, image_data: bytes) -> str:
+    """Generate an interpretation using Groq API based on prediction, confidence, and image data, while fitting the token limit."""
+
+    # Encode image data as base64 to include in the prompt, limiting the image data size
+    image_base64 = base64.b64encode(image_data[:3000]).decode('utf-8')  # Use only the first 3000 bytes for brevity
+
+    # Define a concise prompt that fits the token limit
+    prompt = (
+        f"The model classified a medical image as '{prediction}' with confidence {confidence:.2f}. "
+        f"Provide an interpretation, detailing possible scenarios, symptoms, and next steps for a '{prediction}' diagnosis. "
+        f"Consider the model’s confidence score and limitations. Encoded image data (shortened): {image_base64}."
+    )
+
+    # Log the prompt for debugging
+    logger.info(f"Sending prompt to Groq API for prediction: {prediction}, confidence: {confidence}")
+
+    try:
+        # Make the API call to Groq for chat completion
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a clinical assistant providing concise interpretations for medical AI results."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama3-8b-8192"  # Specify the model
+        )
+
+        # Extract and return the generated interpretation from the response
+        interpretation = chat_completion.choices[0].message.content
+        logger.info(f"Generated interpretation from Groq: {interpretation}")
+        return interpretation
+
+    except Exception as e:
+        # Log any errors and return an error message
+        logger.error(f"Failed to get response from Groq API: {e}")
+        return "An error occurred while generating the interpretation with Groq. Please try again later."
+
+
+def check_available_models():
+    """Check and log available models in OpenAI."""
+    try:
+        models = openai.Model.list()
+        available_models = [model.id for model in models['data']]
+        logging.info(f"Available OpenAI models: {available_models}")
+    except Exception as e:
+        logging.error(f"Failed to retrieve available OpenAI models: {e}")
+
+# Call this function to log available models at startup
+check_available_models()
+
+def generate_interpretation_openai(prediction: str, confidence: float, image_data: bytes) -> str:
+    """Generate an interpretation using OpenAI API based on prediction, confidence, and image data."""
+    # Initialize the OpenAI client
+    client = OpenAI(
+        api_key=os.getenv('OPEN_AI_API_KEY') 
+        )  # Ensure OPENAI_API_KEY is set in environment variables
+    
+    # Convert confidence to percentage for clearer communication
+    confidence_percentage = confidence * 100
+
+    try:
+        # Create a message content list with the medical context and findings
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a medical AI assistant specializing in interpreting medical image classifications. Provide detailed clinical interpretations while acknowledging any uncertainties or limitations."
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Based on the medical image analysis, the following classification was made:\n"
+                    f"- Diagnosis: {prediction}\n"
+                    f"- Confidence Level: {confidence_percentage:.1f}%\n\n"
+                    f"Please provide:\n"
+                    f"1. Clinical interpretation\n"
+                    f"2. Likely symptoms\n"
+                    f"3. Recommended next steps\n"
+                    f"4. Any relevant limitations based on the confidence score"
+                )
+            }
+        ]
+
+        logging.info(f"Sending request to OpenAI API - Prediction: {prediction}, Confidence: {confidence_percentage:.1f}%")
+        
+        # Make the API call using the chat completions endpoint
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",  # Changed from gpt-4 to gpt-3.5-turbo
+            messages=messages,
+            temperature=0.4,
+            max_tokens=500,
+            top_p=0.9,
+            frequency_penalty=0.0,
+            presence_penalty=0.0
+        )
+        # Extract the interpretation from the response
+        interpretation = response.choices[0].message.content.strip()
+        
+        logging.info("Successfully generated interpretation from OpenAI")
+        return interpretation
+
+    except Exception as e:
+        error_msg = f"OpenAI API error: {str(e)}"
+        logging.error(error_msg)
+        return (
+            "An error occurred while generating the medical interpretation. "
+            "Please consult with a healthcare professional for accurate diagnosis and treatment options."
+        )
