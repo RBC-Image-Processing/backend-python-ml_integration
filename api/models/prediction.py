@@ -37,21 +37,25 @@ logger = logging.getLogger(__name__)
 classes = ["NORMAL", "PNEUMONIA"]
 
 def load_model(model_name: str = "cnn.pth"):
+    """
+    Load a complete model (architecture + weights) from a saved file.
+
+    Args:
+        model_name (str): The name of the saved model file.
+
+    Returns:
+        model: The loaded PyTorch model, or None if loading fails.
+    """
     model_path = os.path.join(MODEL_DIR, model_name)
     if not os.path.exists(model_path):
         logger.error(f"Model file '{model_name}' not found in {MODEL_DIR}. Ensure the correct path.")
         return None
 
     try:
-        # Initialize the model architecture
-        model = models.resnet50(pretrained=False)
-        model.fc = torch.nn.Linear(model.fc.in_features, len(classes))
-
-        # Load the state_dict (weights only)
-        state_dict = torch.load(model_path, map_location=device)
-        model.load_state_dict(state_dict)
+        # Load the complete model (architecture + weights)
+        model = torch.load(model_path, map_location=device)
         model.to(device)
-        model.eval()
+        model.eval()  # Set the model to evaluation mode
         logger.info(f"Model '{model_name}' successfully loaded on {device}")
         return model
     except Exception as e:
