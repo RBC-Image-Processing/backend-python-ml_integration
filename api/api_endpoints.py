@@ -1,5 +1,6 @@
 import base64
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import torch
 import torch.nn.functional as F
@@ -20,6 +21,20 @@ from dotenv import load_dotenv
 app = FastAPI()
 load_dotenv()
 
+# Configure CORS to allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",      # React dev server (Vite default)
+        "http://localhost:5173",      # React dev server (alternative Vite port)
+        "http://127.0.0.1:3000",      # Alternative localhost format
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 # Set up logging
 logs_dir = os.path.join(os.getcwd(), "logs")
 os.makedirs(logs_dir, exist_ok=True)
@@ -35,9 +50,6 @@ app.add_exception_handler(422, validation_exception_handler)
 # Load model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = load_model("cnn.pth").to(device)
-
-# Set up the Gemini API client
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 @app.get("/")
 async def root():
@@ -193,7 +205,7 @@ async def predict_with_interpretation_openai(file: UploadFile = File(...)):
                 raise HTTPException(status_code=400, detail="Invalid DICOM file format")
         else:
             try:
-                image_tensor = process_image_file(image_data).to(device)
+                image_tensor = process_image(image_data).to(device)
             except Exception as e:
                 logger.error(f"Error processing image file: {e}")
                 raise HTTPException(status_code=400, detail="Invalid image file format")

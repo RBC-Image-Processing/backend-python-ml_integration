@@ -1,10 +1,8 @@
-import openai
 import os
 import base64
 import torch
 import torch.nn.functional as F
 import logging
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from torchvision import models
 from api.utils.image_processing import process_dicom_with_clahe
 import requests
@@ -16,10 +14,6 @@ from typing import Optional
 
 # Load environment variables
 load_dotenv()
-
-# Verify the API keys
-print("GROQ_API_KEY:", os.getenv("GROQ_API_KEY"))
-print("GEMINI_API_KEY:", os.getenv("GEMINI_API_KEY"))
 
 # Initialize Groq client with API key
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -114,17 +108,34 @@ def generate_interpretation_gemini(prediction: str, confidence: float, image_dat
 
     logger.info(f"Generating interpretation with Gemini API for prediction: {prediction}, confidence: {confidence}")
 
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
+    # Try Gemini 1.5 Pro first, fall back to Gemini Pro if needed
+    model_names = ["gemini-1.5-pro", "gemini-pro"]
 
-        interpretation = response.text
-        logger.info(f"Generated interpretation: {interpretation}")
-        return interpretation
+    for model_name in model_names:
+        try:
+            logger.info(f"Attempting to use Gemini model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
 
-    except Exception as e:
-        logger.error(f"Failed to get response from Gemini API: {e}")
-        return "An error occurred while generating the interpretation. Please try again later."
+            interpretation = response.text
+            logger.info(f"Successfully generated interpretation using {model_name}")
+            logger.info(f"Interpretation: {interpretation}")
+            return interpretation
+
+        except Exception as e:
+            logger.warning(f"Failed with model {model_name}: {e}")
+            if model_name == model_names[-1]:  # Last model in list
+                logger.error(f"All Gemini models failed. Last error: {e}")
+                # Provide a more helpful error message to users
+                error_msg = (
+                    f"Unable to generate detailed interpretation. "
+                    f"The AI model classified this as '{prediction}' with {confidence*100:.1f}% confidence. "
+                    f"Please consult with a healthcare professional for accurate diagnosis."
+                )
+                return error_msg
+            else:
+                logger.info(f"Trying fallback model...")
+                continue
 
 def generate_interpretation_groq(prediction: str, confidence: float, image_data: bytes) -> str:
     """Generate an interpretation using Groq API based on prediction, confidence, and image data, while fitting the token limit."""
@@ -162,18 +173,6 @@ def generate_interpretation_groq(prediction: str, confidence: float, image_data:
         logger.error(f"Failed to get response from Groq API: {e}")
         return "An error occurred while generating the interpretation with Groq. Please try again later."
 
-
-def check_available_models():
-    """Check and log available models in OpenAI."""
-    try:
-        models = openai.Model.list()
-        available_models = [model.id for model in models['data']]
-        logging.info(f"Available OpenAI models: {available_models}")
-    except Exception as e:
-        logging.error(f"Failed to retrieve available OpenAI models: {e}")
-
-# Call this function to log available models at startup
-check_available_models()
 
 def generate_interpretation_openai(prediction: str, confidence: float, image_data: bytes) -> str:
     """Generate an interpretation using OpenAI API based on prediction, confidence, and image data."""

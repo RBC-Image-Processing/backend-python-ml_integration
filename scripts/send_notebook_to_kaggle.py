@@ -143,6 +143,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Get variables from .env
+kaggle_api_token = os.getenv('KAGGLE_API_TOKEN')
 kaggle_username = os.getenv('KAGGLE_USERNAME')
 kaggle_key = os.getenv('KAGGLE_KEY')
 notebook_path = os.getenv('NOTEBOOK_PATH')
@@ -158,8 +159,57 @@ polling_interval = 120  # 120 seconds (2 minutes)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 unique_kernel_name = f"{kernel_base_name}_{timestamp}"  # Unique kernel name
 
-# Validate that critical environment variables are set
-if not all([kaggle_username, kaggle_key, notebook_path, unique_kernel_name, dataset_path]):
+# Setup Kaggle API credentials
+kaggle_dir = os.path.expanduser('~/.kaggle')
+os.makedirs(kaggle_dir, exist_ok=True)
+
+# Prioritize token-based authentication (newer method)
+if kaggle_api_token:
+    # Use token-based auth
+    access_token_path = os.path.join(kaggle_dir, 'access_token')
+    with open(access_token_path, 'w') as f:
+        f.write(kaggle_api_token)
+
+    # Set permissions (Unix/Mac only, skip on Windows)
+    try:
+        os.chmod(access_token_path, 0o600)
+    except (OSError, NotImplementedError):
+        logging.warning("Could not set file permissions (Windows system)")
+
+    logging.info(f"Kaggle API token created at {access_token_path}")
+
+    # If username not set but token is, we still need username for kernel ID
+    # Try to get it from existing kaggle.json or prompt user
+    if not kaggle_username:
+        existing_kaggle_json = os.path.join(kaggle_dir, 'kaggle.json')
+        if os.path.exists(existing_kaggle_json):
+            with open(existing_kaggle_json, 'r') as f:
+                creds = json.load(f)
+                kaggle_username = creds.get('username')
+                logging.info(f"Retrieved username from existing kaggle.json: {kaggle_username}")
+
+        if not kaggle_username:
+            logging.error("KAGGLE_USERNAME is required for kernel metadata. Please set it in .env")
+            exit(1)
+
+elif kaggle_username and kaggle_key:
+    # Use legacy username/key auth
+    kaggle_json_path = os.path.join(kaggle_dir, 'kaggle.json')
+    with open(kaggle_json_path, 'w') as f:
+        f.write(f'{{"username":"{kaggle_username}", "key":"{kaggle_key}"}}')
+
+    try:
+        os.chmod(kaggle_json_path, 0o600)
+    except (OSError, NotImplementedError):
+        logging.warning("Could not set file permissions (Windows system)")
+
+    logging.info(f"Kaggle API credentials created at {kaggle_json_path}")
+else:
+    logging.error("No Kaggle credentials found. Set KAGGLE_API_TOKEN or KAGGLE_USERNAME/KAGGLE_KEY in .env")
+    exit(1)
+
+# Validate required variables
+if not all([notebook_path, unique_kernel_name, dataset_path]):
     logging.error("One or more required environment variables are missing. Please check your .env file.")
     exit(1)
 
@@ -167,17 +217,6 @@ if not all([kaggle_username, kaggle_key, notebook_path, unique_kernel_name, data
 if not os.path.exists(notebook_path):
     logging.error(f"Notebook path '{notebook_path}' does not exist. Please check the path.")
     exit(1)
-
-# Setup Kaggle API credentials
-kaggle_dir = os.path.expanduser('~/.kaggle')
-os.makedirs(kaggle_dir, exist_ok=True)
-kaggle_json_path = os.path.join(kaggle_dir, 'kaggle.json')
-
-with open(kaggle_json_path, 'w') as f:
-    f.write(f'{{"username":"{kaggle_username}", "key":"{kaggle_key}"}}')
-
-os.chmod(kaggle_json_path, 0o600)
-logging.info(f"Kaggle API credentials created at {kaggle_json_path}")
 
 # Create metadata for the Kaggle kernel
 metadata = {

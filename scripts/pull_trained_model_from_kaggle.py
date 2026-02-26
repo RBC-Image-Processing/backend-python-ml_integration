@@ -30,6 +30,39 @@ def get_last_run_kernel_name():
 # Get the last run kernel name
 kernel_name = get_last_run_kernel_name()
 
+# Setup Kaggle API credentials (same logic as send_notebook_to_kaggle.py)
+kaggle_api_token = os.getenv('KAGGLE_API_TOKEN')
+kaggle_username = os.getenv('KAGGLE_USERNAME')
+kaggle_key = os.getenv('KAGGLE_KEY')
+
+kaggle_dir = os.path.expanduser('~/.kaggle')
+os.makedirs(kaggle_dir, exist_ok=True)
+
+if kaggle_api_token:
+    # Use token-based auth
+    access_token_path = os.path.join(kaggle_dir, 'access_token')
+    with open(access_token_path, 'w') as f:
+        f.write(kaggle_api_token)
+    try:
+        os.chmod(access_token_path, 0o600)
+    except (OSError, NotImplementedError):
+        pass
+    logging.info("Using Kaggle API token authentication")
+elif kaggle_username and kaggle_key:
+    # Use legacy username/key auth
+    kaggle_json_path = os.path.join(kaggle_dir, 'kaggle.json')
+    with open(kaggle_json_path, 'w') as f:
+        import json
+        f.write(f'{{"username":"{kaggle_username}", "key":"{kaggle_key}"}}')
+    try:
+        os.chmod(kaggle_json_path, 0o600)
+    except (OSError, NotImplementedError):
+        pass
+    logging.info("Using Kaggle username/key authentication")
+else:
+    logging.error("No Kaggle credentials found in .env")
+    exit(1)
+
 # Initialize Kaggle API
 logging.info("Authenticating Kaggle API...")
 api = KaggleApi()
