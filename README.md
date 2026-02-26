@@ -96,13 +96,23 @@ The server starts on `http://0.0.0.0:8000`.
 
 ## Model Setup
 
-The CNN model file must be placed at `output/cnn.pth`.
+The CNN model file must be placed at `output/cnn.pth`. This file is **gitignored** (91MB) and must be obtained separately.
 
-### Option 1: Download a Pre-trained Model
+### Option 1: Pull from Kaggle (Recommended)
 
-If a team member has already trained the model, get the `cnn.pth` file from them and place it in `output/`.
+If the model has already been trained on Kaggle, pull it directly:
 
-### Option 2: Train on Kaggle
+```bash
+python scripts/pull_trained_model_from_kaggle.py
+```
+
+This downloads the trained model from the team's Kaggle kernel output and saves it to `output/cnn.pth`.
+
+### Option 2: Get from a Team Member
+
+Ask a team member who has the trained model to share their `cnn.pth` file. Place it at `output/cnn.pth`.
+
+### Option 3: Train on Kaggle from Scratch
 
 1. Set up Kaggle credentials in `.env`
 2. Generate a training notebook:
